@@ -1,0 +1,110 @@
+#include <ESP32Servo.h>
+
+/* DUAL AXIS SOLAR TRACKER - ESP32
+   --------------------------------
+   Hardware Reminder:
+   1. Connect Custom Battery (+) -> Servo Red Wires
+   2. Connect Custom Battery (-) -> Servo Brown Wires AND ESP32 GND (Crucial!)
+   3. Connect ESP32 Pins -> Servo Orange/Yellow Wires
+*/
+
+// --- Pin Definitions ---
+// Note: ADC2 pins (GPIO 0,2,4,12-15,25-27) cannot be used if WiFi is on.
+// We are using safe ADC1 pins here.
+const int LDR_TOP_LEFT     = 32; 
+const int LDR_TOP_RIGHT    = 33;
+const int LDR_BOTTOM_LEFT  = 34;
+const int LDR_BOTTOM_RIGHT = 35;
+
+const int SERVO_PAN_PIN    = 18; // Horizontal (East/West)
+const int SERVO_TILT_PIN   = 19; // Vertical (Up/Down)
+
+// --- Settings ---
+const int TOLERANCE = 50;      // Difference in light needed to move (prevents jitter)
+const int STEP_DELAY = 15;     // Lower = faster speed
+const int NIGHT_LIMIT = 200;   // If light is below this, it's night (0-4095 range)
+
+// --- Servo Objects ---
+Servo servoPan;
+Servo servoTilt;
+
+// --- Position Variables ---
+int posPan = 90; 
+int posTilt = 90;
+
+// Limits to prevent mechanical locking
+const int PAN_MIN = 0;   const int PAN_MAX = 180;
+const int TILT_MIN = 10; const int TILT_MAX = 140; // Tilt usually has less range
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Attach Servos
+  servoPan.attach(SERVO_PAN_PIN);
+  servoTilt.attach(SERVO_TILT_PIN);
+  
+  // Move to starting position
+  servoPan.write(posPan);
+  servoTilt.write(posTilt);
+  
+  Serial.println("Solar Tracker Initialized.");
+  delay(1000);
+}
+
+void loop() {
+  // 1. Read Sensors
+  int tl = analogRead(LDR_TOP_LEFT);
+  int tr = analogRead(LDR_TOP_RIGHT);
+  int bl = analogRead(LDR_BOTTOM_LEFT);
+  int br = analogRead(LDR_BOTTOM_RIGHT);
+
+  // 2. Average Calculations
+  int avgTop = (tl + tr) / 2;
+  int avgBot = (bl + br) / 2;
+  int avgLeft = (tl + bl) / 2;
+  int avgRight = (tr + br) / 2;
+  
+  int avgOverall = (avgTop + avgBot + avgLeft + avgRight) / 4;
+
+  // 3. Night Mode Check
+  // If it's too dark, don't drain battery moving motors.
+  if (avgOverall < NIGHT_LIMIT) {
+     Serial.println("Night detected - Sleep mode");
+     delay(1000);
+     return; 
+  }
+
+  // 4. Vertical Logic (Tilt)
+  // If Top is brighter than Bottom by 'tolerance' amount
+  if (abs(avgTop - avgBot) > TOLERANCE) {
+    if (avgTop > avgBot) {
+      posTilt = posTilt + 1; // Look Up
+    } else {
+      posTilt = posTilt - 1; // Look Down
+    }
+    
+    // Safety Clamp
+    if (posTilt > TILT_MAX) posTilt = TILT_MAX;
+    if (posTilt < TILT_MIN) posTilt = TILT_MIN;
+    
+    servoTilt.write(posTilt);
+  }
+
+  // 5. Horizontal Logic (Pan)
+  // If Left is brighter than Right by 'tolerance' amount
+  if (abs(avgLeft - avgRight) > TOLERANCE) {
+    if (avgLeft > avgRight) {
+      posPan = posPan - 1; // Turn Left
+    } else {
+      posPan = posPan + 1; // Turn Right
+    }
+    
+    // Safety Clamp
+    if (posPan > PAN_MAX) posPan = PAN_MAX;
+    if (posPan < PAN_MIN) posPan = PAN_MIN;
+    
+    servoPan.write(posPan);
+  }
+
+  delay(STEP_DELAY);
+}
